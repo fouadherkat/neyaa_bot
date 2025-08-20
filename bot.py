@@ -3,23 +3,19 @@ import re
 import asyncio
 import requests
 import feedparser
-from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# ==== التوكنات من Environment Variables ====
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 EASYVIDPLAY_TOKEN = os.getenv("EASYVIDPLAY_TOKEN")
-
 EASYVIDPLAY_API = "https://easyvidplay.com/api/video"
 RSS_URL = "https://nyaa.si/?page=rss&c=1_2&f=0"
 
-# ==== تخزين الحلقات المرسلة ====
 sent_items = set()
 chat_id_global = None
-scheduler = BackgroundScheduler()
+scheduler = AsyncIOScheduler()
 
-# ==== رفع للسيرفر ====
 def upload_to_server(magnet_link: str):
     headers = {"Authorization": f"Bearer {EASYVIDPLAY_TOKEN}"}
     data = {"url": magnet_link}
@@ -32,7 +28,6 @@ def upload_to_server(magnet_link: str):
     except Exception as e:
         return {"error": str(e)}
 
-# ==== فحص RSS ====
 async def check_rss(app):
     global sent_items, chat_id_global
     if not chat_id_global:
@@ -48,7 +43,6 @@ async def check_rss(app):
                 if getattr(l, "type", "") == "application/x-bittorrent" or "magnet:?" in getattr(l, "href", ""):
                     magnet = l.href
 
-            # معلومات الحلقة
             title = entry.title
             size_match = re.search(r"\[(\d+(\.\d+)?\s?(MB|GB|KiB|GiB))\]", title)
             size = size_match.group(1) if size_match else "غير معروف"
@@ -77,7 +71,6 @@ async def check_rss(app):
                 parse_mode="Markdown"
             )
 
-# ==== عند الضغط على زر ====
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -95,21 +88,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         magnet = data.split("|", 1)[1]
         await query.edit_message_text(f"🔗 رابط Magnet:\n`{magnet}`", parse_mode="Markdown")
 
-# ==== /start ====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global chat_id_global
     chat_id_global = update.effective_chat.id
     await update.message.reply_text("🚀 بدأ البوت بمراقبة Nyaa كل دقيقة...")
 
     if not scheduler.running:
+        scheduler.add_job(lambda: asyncio.create_task(check_rss(context.application)), "interval", minutes=1)
         scheduler.start()
-        scheduler.add_job(lambda: asyncio.run(check_rss(context.application)), "interval", minutes=1)
 
-# ==== main ====
 if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
-
     app.run_polling()
