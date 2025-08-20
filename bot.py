@@ -38,23 +38,28 @@ async def check_rss(app: ApplicationBuilder):
         return
 
     feed = feedparser.parse(RSS_URL)
-    for entry in feed.entries[:5]:  # نأخذ آخر 5 عناصر فقط
+    for entry in feed.entries[:5]:
         if entry.link not in sent_items:
             sent_items.add(entry.link)
 
-            # نبحث عن magnet من entry.links
+            # البحث عن magnet
             magnet = None
             for l in entry.links:
-                if l.type == "application/x-bittorrent":
+                if l.type == "application/x-bittorrent" or "magnet:?" in l.href:
                     magnet = l.href
-                if "magnet:?" in l.href:
-                    magnet = l.href
+                    break
 
-            keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("📥 رفع على EasyVidPlay", callback_data=f"upload|{magnet}")
-            ]]) if magnet else None
+            # إنشاء أزرار
+            buttons = []
+            if magnet:
+                buttons.append(InlineKeyboardButton("📥 رفع على EasyVidPlay", callback_data=f"upload|{magnet}"))
+                buttons.append(InlineKeyboardButton("🔗 نسخ رابط Magnet", callback_data=f"copy|{magnet}"))
 
-            text = f"🎬 *{entry.title}*\n🔗 [رابط Nyaa]({entry.link})"
+            keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
+
+            # نص الرسالة مع رابط صفحة الحلقة
+            text = f"🎬 *{entry.title}*\n🔗 [صفحة الحلقة على Nyaa]({entry.link})"
+
             await app.bot.send_message(
                 chat_id=chat_id_global,
                 text=text,
@@ -76,6 +81,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             stream_url = result.get("url") or str(result)
             await query.edit_message_text(f"✅ تم الرفع بنجاح!\n{stream_url}")
+
+    elif data.startswith("copy|"):
+        magnet = data.split("|", 1)[1]
+        await query.edit_message_text(f"📋 رابط Magnet:\n`{magnet}`", parse_mode="Markdown")
 
 # ==== /start ====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
