@@ -11,7 +11,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 EASYVIDPLAY_TOKEN = os.getenv("EASYVIDPLAY_TOKEN")
 
 EASYVIDPLAY_API = "https://easyvidplay.com/api/video"
-RSS_URL = "https://nyaa.si/?page=rss&c=1_2&f=0"
+RSS_URL = "https://nyaa.si/?page=rss&c=1_2&f=0"  # Anime - English Translation
 
 # ==== تخزين الحلقات المرسلة ====
 sent_items = set()
@@ -38,7 +38,7 @@ async def check_rss(app: ApplicationBuilder):
         return
 
     feed = feedparser.parse(RSS_URL)
-    for entry in feed.entries[:5]:
+    for entry in feed.entries[:5]:  # آخر 5 حلقات فقط
         if entry.link not in sent_items:
             sent_items.add(entry.link)
 
@@ -47,18 +47,31 @@ async def check_rss(app: ApplicationBuilder):
             for l in entry.links:
                 if l.type == "application/x-bittorrent" or "magnet:?" in l.href:
                     magnet = l.href
-                    break
 
-            # إنشاء أزرار
+            # استخراج الحجم (إن وجد)
+            size = getattr(entry, "nyaa_size", None)
+            if not size and hasattr(entry, "links"):
+                for l in entry.links:
+                    if hasattr(l, "length"):
+                        size = l.length
+                        break
+
+            # التحقق من الترجمة العربية
+            arabic_sub = "نعم" if "Arabic" in entry.title or "عربي" in entry.title else "لا"
+
+            text = f"🎬 *{entry.title}*\n"
+            text += f"🔗 [صفحة الحلقة على Nyaa]({entry.link})\n"
+            text += f"💾 الحجم: {size or 'غير متوفر'}\n"
+            text += f"🏷 الفلتر: Anime - English Translation\n"
+            text += f"🇸🇦 ترجمة عربية: {arabic_sub}"
+
+            # إنشاء الأزرار
             buttons = []
             if magnet:
-                buttons.append(InlineKeyboardButton("📥 رفع على EasyVidPlay", callback_data=f"upload|{magnet}"))
-                buttons.append(InlineKeyboardButton("🔗 نسخ رابط Magnet", callback_data=f"copy|{magnet}"))
+                buttons.append([InlineKeyboardButton("📥 رفع على EasyVidPlay", callback_data=f"upload|{magnet}")])
+                buttons.append([InlineKeyboardButton("🔗 نسخ رابط Magnet", callback_data=f"copy|{magnet}")])
 
-            keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
-
-            # نص الرسالة مع رابط صفحة الحلقة
-            text = f"🎬 *{entry.title}*\n🔗 [صفحة الحلقة على Nyaa]({entry.link})"
+            keyboard = InlineKeyboardMarkup(buttons) if buttons else None
 
             await app.bot.send_message(
                 chat_id=chat_id_global,
@@ -81,10 +94,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             stream_url = result.get("url") or str(result)
             await query.edit_message_text(f"✅ تم الرفع بنجاح!\n{stream_url}")
-
     elif data.startswith("copy|"):
         magnet = data.split("|", 1)[1]
-        await query.edit_message_text(f"📋 رابط Magnet:\n`{magnet}`", parse_mode="Markdown")
+        await query.edit_message_text(f"🔗 رابط Magnet:\n`{magnet}`", parse_mode="Markdown")
 
 # ==== /start ====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
