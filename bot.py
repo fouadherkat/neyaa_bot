@@ -1,8 +1,9 @@
 import os
+import re
 import asyncio
 import requests
 import feedparser
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -16,7 +17,7 @@ RSS_URL = "https://nyaa.si/?page=rss&c=1_2&f=0"
 # ==== تخزين الحلقات المرسلة ====
 sent_items = set()
 chat_id_global = None
-scheduler = AsyncIOScheduler()
+scheduler = BackgroundScheduler()
 
 # ==== رفع للسيرفر ====
 def upload_to_server(magnet_link: str):
@@ -38,27 +39,30 @@ async def check_rss(app):
         return
 
     feed = feedparser.parse(RSS_URL)
-    for entry in feed.entries[:5]:  # آخر 5 عناصر
+    for entry in feed.entries:
         if entry.link not in sent_items:
             sent_items.add(entry.link)
 
             magnet = None
-            for l in entry.links:
-                if "magnet:?" in l.href or l.type == "application/x-bittorrent":
+            for l in getattr(entry, "links", []):
+                if getattr(l, "type", "") == "application/x-bittorrent" or "magnet:?" in getattr(l, "href", ""):
                     magnet = l.href
 
-            # معلومات إضافية
-            size = getattr(entry, "nyaa_size", "غير معروف")
-            filter_cat = getattr(entry, "nyaa_category", "غير معروف")
-            arabic_sub = "نعم" if "Arabic" in entry.title or "عربي" in entry.title else "لا"
+            # معلومات الحلقة
+            title = entry.title
+            size_match = re.search(r"\[(\d+(\.\d+)?\s?(MB|GB|KiB|GiB))\]", title)
+            size = size_match.group(1) if size_match else "غير معروف"
+            filter_cat = "Anime - English Translation"
+            arabic_sub = "نعم" if re.search(r"Arabic|عربي", title, re.IGNORECASE) else "لا"
 
-            text = f"🎬 *{entry.title}*\n"
-            text += f"📦 الحجم: {size}\n"
-            text += f"🎭 الفلتر: {filter_cat}\n"
-            text += f"🇸🇦 ترجمة عربية: {arabic_sub}\n"
-            text += f"🔗 [صفحة Nyaa]({entry.link})"
+            text = (
+                f"🎬 *{title}*\n"
+                f"🔗 [صفحة الحلقة]({entry.link})\n"
+                f"📦 الحجم: {size}\n"
+                f"📂 الفئة: {filter_cat}\n"
+                f"🈶 ترجمة عربية: {arabic_sub}"
+            )
 
-            # أزرار
             buttons = []
             if magnet:
                 buttons.append(InlineKeyboardButton("📥 رفع على EasyVidPlay", callback_data=f"upload|{magnet}"))
@@ -87,7 +91,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             stream_url = result.get("url") or str(result)
             await query.edit_message_text(f"✅ تم الرفع بنجاح!\n{stream_url}")
-
     elif data.startswith("copy|"):
         magnet = data.split("|", 1)[1]
         await query.edit_message_text(f"🔗 رابط Magnet:\n`{magnet}`", parse_mode="Markdown")
@@ -99,12 +102,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🚀 بدأ البوت بمراقبة Nyaa كل دقيقة...")
 
     if not scheduler.running:
-        scheduler.add_job(lambda: asyncio.create_task(check_rss(context.application)), "interval", minutes=1)
         scheduler.start()
+        scheduler.add_job(lambda: asyncio.run(check_rss(context.application)), "interval", minutes=1)
 
 # ==== main ====
 if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
+
     app.run_polling()
