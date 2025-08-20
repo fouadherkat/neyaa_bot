@@ -32,32 +32,38 @@ def upload_to_server(magnet_link: str):
         return {"error": str(e)}
 
 # ==== فحص RSS ====
-async def check_rss(app):
+async def check_rss(app: ApplicationBuilder):
     global sent_items, chat_id_global
     if not chat_id_global:
         return
 
     feed = feedparser.parse(RSS_URL)
-    for entry in feed.entries[:5]:  # آخر 5 عناصر
+    for entry in feed.entries[:5]:  # آخر 5 حلقات
         if entry.link not in sent_items:
             sent_items.add(entry.link)
 
-            # البحث عن magnet
+            # البحث عن Magnet
             magnet = None
-            for l in entry.links:
-                if getattr(l, "type", "") == "application/x-bittorrent":
-                    magnet = l.href
-                elif "magnet:?" in getattr(l, "href", ""):
-                    magnet = l.href
+            if hasattr(entry, "links"):
+                for l in entry.links:
+                    if "magnet:?" in l.href:
+                        magnet = l.href
+                        break
 
-            # معلومات الحلقة
+            # حجم الحلقة (إن وجد)
+            size = getattr(entry, "nyaa_size", None)
+            if not size:
+                # محاولة استخراج الحجم من الوصف
+                if hasattr(entry, "description"):
+                    import re
+                    match = re.search(r'Size:\s*([^\n<]+)', entry.description)
+                    if match:
+                        size = match.group(1)
+
+            # الترجمة العربية
             arabic_sub = "نعم" if "[Arabic]" in entry.title or "[Ar]" in entry.title else "لا"
-            size = getattr(entry, "size", "غير معروف")
-            category = getattr(entry, "category", "Anime - English Translation")
 
-            text = f"🎬 *{entry.title}*\n📂 الحجم: {size}\n🎯 الفلتر: {category}\n🈷 ترجمة عربية: {arabic_sub}\n🔗 [صفحة الحلقة على Nyaa]({entry.link})"
-
-            # إنشاء أزرار
+            # إعداد الأزرار
             buttons = []
             if magnet:
                 buttons.append([
@@ -65,8 +71,14 @@ async def check_rss(app):
                     InlineKeyboardButton("🔗 نسخ رابط Magnet", callback_data=f"copy|{magnet}")
                 ])
             buttons.append([InlineKeyboardButton("🌐 صفحة الحلقة على Nyaa", url=entry.link)])
-
             keyboard = InlineKeyboardMarkup(buttons)
+
+            # نص الرسالة
+            text = f"🎬 *{entry.title}*\n"
+            if size:
+                text += f"💾 الحجم: {size}\n"
+            text += f"🈶 ترجمة عربية: {arabic_sub}\n"
+            text += f"🔗 [رابط Nyaa]({entry.link})"
 
             await app.bot.send_message(
                 chat_id=chat_id_global,
