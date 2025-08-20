@@ -2,11 +2,12 @@ import os
 import asyncio
 import requests
 import feedparser
+from bs4 import BeautifulSoup
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# ==== التوكنات ====
+# ==== التوكنات من Environment Variables ====
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 EASYVIDPLAY_TOKEN = os.getenv("EASYVIDPLAY_TOKEN")
 
@@ -31,43 +32,65 @@ def upload_to_server(magnet_link: str):
     except Exception as e:
         return {"error": str(e)}
 
+# ==== تحليل صفحة الحلقة للحصول على الحجم والفئة والترجمة ====
+def parse_episode_page(link):
+    try:
+        r = requests.get(link, timeout=15)
+        soup = BeautifulSoup(r.content, "html.parser")
+
+        # الحجم
+        size_elem = soup.find("td", string="Size:")
+        size = size_elem.find_next_sibling("td").text if size_elem else "غير معروف"
+
+        # الفئة
+        cat_elem = soup.find("td", string="Category:")
+        category = cat_elem.find_next_sibling("td").text if cat_elem else "غير معروف"
+
+        # الترجمة العربية
+        arabic = "نعم" if "Arabic" in soup.get_text() else "لا"
+
+        return size, category, arabic
+    except:
+        return "غير معروف", "غير معروف", "لا"
+
 # ==== فحص RSS ====
-async def check_rss(app):
+async def check_rss(app: ApplicationBuilder):
     global sent_items, chat_id_global
     if not chat_id_global:
         return
 
     feed = feedparser.parse(RSS_URL)
     for entry in feed.entries:
-        if entry.link not in sent_items:
-            sent_items.add(entry.link)
+        if entry.id not in sent_items:
+            sent_items.add(entry.id)
 
-            # العثور على magnet
+            # رابط صفحة الحلقة
+            episode_link = f"https://nyaa.si/view/{entry.id.split('/')[-1]}"
+
+            # البحث عن magnet
             magnet = None
             for l in entry.links:
                 if l.type == "application/x-bittorrent" or "magnet:?" in l.href:
                     magnet = l.href
-                    break
 
-            # معلومات إضافية
-            size = getattr(entry, 'nyaa_size', 'غير معروف')
-            category = getattr(entry, 'nyaa_category', 'غير معروف')
-            has_arabic = "نعم" if "Arabic" in entry.title else "لا"
+            # استخراج معلومات إضافية من صفحة الحلقة
+            size, category, arabic = parse_episode_page(episode_link)
 
-            text = (
-                f"🎬 *{entry.title}*\n"
-                f"📦 الحجم: {size}\n"
-                f"🏷️ الفئة: {category}\n"
-                f"📝 ترجمة عربية: {has_arabic}\n"
-                f"🔗 [صفحة الحلقة على Nyaa]({entry.link})"
-            )
-
+            # إنشاء الأزرار
             buttons = []
             if magnet:
                 buttons.append(InlineKeyboardButton("📥 رفع على EasyVidPlay", callback_data=f"upload|{magnet}"))
-                buttons.append(InlineKeyboardButton("🔗 نسخ رابط Magnet", url=magnet))
-
+                buttons.append(InlineKeyboardButton("🧲 نسخ رابط Magnet", url=magnet))
             keyboard = InlineKeyboardMarkup([buttons]) if buttons else None
+
+            # نص الرسالة
+            text = (
+                f"🎬 *{entry.title}*\n"
+                f"📄 [صفحة الحلقة على Nyaa]({episode_link})\n"
+                f"💾 الحجم: {size}\n"
+                f"📂 الفئة: {category}\n"
+                f"🇸🇦 ترجمة عربية: {arabic}"
+            )
 
             await app.bot.send_message(
                 chat_id=chat_id_global,
@@ -95,9 +118,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global chat_id_global
     chat_id_global = update.effective_chat.id
-    await update.message.reply_text("🚀 بدأ البوت بمراقبة Nyaa... سيتم إرسال الحلقات الجديدة تلقائيًا.")
+    await update.message.reply_text("🚀 بدأ البوت بمراقبة Nyaa كل دقيقة...")
 
-    # تشغيل الجدولة مرة واحدة
+    # تشغيل الجدولة
     if not scheduler.running:
         scheduler.add_job(lambda: asyncio.create_task(check_rss(context.application)), "interval", minutes=1)
         scheduler.start()
